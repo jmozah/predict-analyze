@@ -1,2 +1,2 @@
 # predict_analyze
-Analyze predict_al execution results
+Import the prediction and access list tracing results into a postgreSql database, and then analyze it.
