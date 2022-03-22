@@ -30,6 +30,60 @@ def match_slots(p_slots, t_slots):
     return i
 
 
+# convert ac_tracer2 acl to ac_tracer acl record
+def summarize_access_list2(record):
+    acl = record['acl']
+    acl2 = {}
+    acl_set = {}
+    for address, funcs in acl.items():
+        address_slots = set()
+        if address in acl_set:
+            address_slots = acl_set[address]
+
+        if len(funcs) > 0:
+            for func, func_acl in funcs.items():
+                acl2[address + "-" + func] = func_acl
+
+                for address2, slots in func_acl.items():
+                    if "s" == address2:
+                        if len(slots) > 0:
+                            for slot in slots:
+                                address_slots.add(slot)
+                    elif address2 not in acl_set:
+                        acl_set[address2] = set()
+
+        acl_set[address] = address_slots
+
+    a = []
+    s = []
+    ts = 0
+    ta = len(acl_set)
+    for address, slots in acl_set.items():
+        a.append(address)
+        if len(slots) > 0:
+            keys = []
+            for k in slots:
+                keys.append(k)
+
+            slots2 = {'address': address, 'storageKeys': keys}
+            s.append(slots2)
+            ts = ts + len(keys)
+
+    rd = {
+        'a': a
+    }
+
+    if len(s) > 0:
+        rd['s'] = s
+
+    record['ta'] = ta
+    record['ts'] = ts
+    record['rd'] = [rd]
+
+    record['acl'] = acl2
+    return record
+
+
 def parse_block(conn, predictor_prefix, tracer_prefix, block_num, dry=0):
     postfix = "-" + str(block_num) + ".json"
     predictor_file = predictor_prefix + postfix
@@ -39,7 +93,7 @@ def parse_block(conn, predictor_prefix, tracer_prefix, block_num, dry=0):
             "total_slots, round_batches, accounts, slots, stat_time,matched_accounts, matched_slots,ratio_accounts," \
             "ratio_slots ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"
     t_sql = "INSERT INTO trace(hash, block, type, jumpis, total_touches, total_accounts, " \
-            "total_slots,accounts, slots, stat_time) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s )"
+            "total_slots,accounts, slots, stat_time, acl) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"
 
     # Usually happens when the block is an empty block
     if not Path(predictor_file).is_file():
@@ -66,6 +120,11 @@ def parse_block(conn, predictor_prefix, tracer_prefix, block_num, dry=0):
                     raise Exception("The {}th tx of block {} in predictor and tracer results are different")
 
                 tx_hash = p_result['h']
+
+                acl = {}
+                if 'rd' not in t_result:
+                    t_result = summarize_access_list2(t_result)
+                    acl = t_result['acl']
 
                 p_accounts = p_result['rd'][0].get('a', [])
                 p_slots = p_result['rd'][0].get('s', [])
@@ -109,7 +168,7 @@ def parse_block(conn, predictor_prefix, tracer_prefix, block_num, dry=0):
                     cur.execute(t_sql, (
                         tx_hash, block_num, t_result['type'], t_result['jumpis'], t_result['tt'], t_result['ta'],
                         t_result['ts'],
-                        json.dumps(t_accounts), json.dumps(t_slots), t_stat_time))
+                        json.dumps(t_accounts), json.dumps(t_slots), t_stat_time, json.dumps(acl)))
 
                     conn.commit()
             return len(predictor_results)

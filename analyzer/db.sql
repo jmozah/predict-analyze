@@ -27,5 +27,7 @@ CREATE TABLE trace
     total_slots    int      NOT NULL,
     accounts       jsonb,
     slots          jsonb,
-    stat_time      bigint
+    stat_time      bigint,
+    acl            jsonb
 );
+CREATE INDEX idxgin ON trace USING GIN (acl);
