@@ -30,7 +30,7 @@ def match_slots(p_slots, t_slots):
     return i
 
 
-# convert ac_tracer2 acl to ac_tracer acl record
+# convert ac_tracer2 acl to predict_al acl record
 def summarize_access_list2(record):
     acl = record['acl']
     acl2 = {}
@@ -92,8 +92,8 @@ def parse_block(conn, predictor_prefix, tracer_prefix, block_num, dry=0):
     p_sql = "INSERT INTO predict(hash, block, total_touches,total_rounds, total_accounts, " \
             "total_slots, round_batches, accounts, slots, stat_time,matched_accounts, matched_slots,ratio_accounts," \
             "ratio_slots ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"
-    t_sql = "INSERT INTO trace(hash, block, type, jumpis, total_touches, total_accounts, " \
-            "total_slots,accounts, slots, stat_time, acl) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"
+    t_sql = "INSERT INTO trace(hash, block, type, status, jumpis, total_touches, total_accounts, " \
+            "total_slots,accounts, slots, stat_time, acl) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"
 
     # Usually happens when the block is an empty block
     if not Path(predictor_file).is_file():
@@ -125,6 +125,10 @@ def parse_block(conn, predictor_prefix, tracer_prefix, block_num, dry=0):
                 if 'rd' not in t_result:
                     t_result = summarize_access_list2(t_result)
                     acl = t_result['acl']
+
+                status = 1
+                if 'status' in t_result:
+                    status = t_result['status']
 
                 p_accounts = p_result['rd'][0].get('a', [])
                 p_slots = p_result['rd'][0].get('s', [])
@@ -166,9 +170,9 @@ def parse_block(conn, predictor_prefix, tracer_prefix, block_num, dry=0):
                         p_result['st'], matched_accounts, matched_slots, ratio_accounts, ratio_slots))
 
                     cur.execute(t_sql, (
-                        tx_hash, block_num, t_result['type'], t_result['jumpis'], t_result['tt'], t_result['ta'],
-                        t_result['ts'],
-                        json.dumps(t_accounts), json.dumps(t_slots), t_stat_time, json.dumps(acl)))
+                        tx_hash, block_num, t_result['type'], status, t_result['jumpis'], t_result['tt'],
+                        t_result['ta'], t_result['ts'], json.dumps(t_accounts), json.dumps(t_slots), t_stat_time,
+                        json.dumps(acl)))
 
                     conn.commit()
             return len(predictor_results)
@@ -197,7 +201,7 @@ def main():
     arg_parser.add_argument('--begin', '-b', help='begin block number ( including )', required=True)
     arg_parser.add_argument('--end', '-e', help='end block number ( excluded )', required=True)
     arg_parser.add_argument('--dry', '-D', help='dry run, only parse data but not touch database, default is 0',
-                            default=0)
+                            type=int, default=0)
 
     args = arg_parser.parse_args()
 
