@@ -1,32 +1,23 @@
 import json
 from pathlib import Path
 import argparse
-import psycopg2
-from analyzer.db_config import config
+import sqlite3
 
 
 # Load predictor and access list tracer results into a postgresql database block by block
 def match_accounts(p_accounts, t_accounts):
-    s = set(t_accounts)
     i = 0
     for account in p_accounts:
-        if account in s:
+        if account in t_accounts:
             i += 1
     return i
 
 
 def match_slots(p_slots, t_slots):
-    d = {}
-    for address_keys in t_slots:
-        s = set(address_keys['storageKeys'])
-        d[address_keys['address']] = s
-
     i = 0
-    for address_keys in p_slots:
-        if address_keys['address'] in d:
-            for key in address_keys['storageKeys']:
-                if key in d[address_keys['address']]:
-                    i += 1
+    for slot in p_slots:
+        if slot in t_slots:
+            i += 1
     return i
 
 
@@ -123,18 +114,54 @@ def parse_block(conn, predictor_prefix, tracer_prefix, block_num, dry=0):
 
                 acl = {}
                 if 'rd' not in t_result:
-                    t_result = summarize_access_list2(t_result)
-                    acl = t_result['acl']
+                    if 'acl' in t_result:
+                        t_result = summarize_access_list2(t_result)
+                        acl = t_result['acl']
+                    else:
+                        continue
 
                 status = 1
                 if 'status' in t_result:
                     status = t_result['status']
+                    if status == 0:
+                        continue
 
-                p_accounts = p_result['rd'][0].get('a', [])
-                p_slots = p_result['rd'][0].get('s', [])
+                p_accounts = []
+                p_slots = []
+                for row in p_result['rd']:
+                    accounts = row.get('a')
+                    if accounts:
+                        for account in accounts:
+                            p_accounts.append(account)
+                    slots = row.get('s')
+                    if slots:
+                        storageKeys = slots[0].get('storageKeys')
+                        if storageKeys:
+                            for storageKey in storageKeys:
+                                p_slots.append(storageKey)
+                p_accounts = list(set(p_accounts))
+                p_slots = list(set(p_slots))
+                # p_accounts = p_result['rd'][0].get('a', [])
+                # p_slots = p_result['rd'][0].get('s', [])
 
-                t_accounts = t_result['rd'][0].get('a', [])
-                t_slots = t_result['rd'][0].get('s', [])
+                t_accounts = []
+                t_slots = []
+                for row in t_result['rd']:
+                    accounts = row.get('a')
+                    if accounts:
+                        for account in accounts:
+                            t_accounts.append(account)
+                    slots = row.get('s')
+                    if slots:
+                        storageKeys = slots[0].get('storageKeys')
+                        if storageKeys:
+                            for storageKey in storageKeys:
+                                t_slots.append(storageKey)
+                t_accounts = list(set(t_accounts))
+                t_slots = list(set(t_slots))
+
+                # t_accounts = t_result['rd'][0].get('a', [])
+                # t_slots = t_result['rd'][0].get('s', [])
 
                 ratio_accounts = 0
                 ratio_slots = 0
@@ -144,11 +171,11 @@ def parse_block(conn, predictor_prefix, tracer_prefix, block_num, dry=0):
                 else:
                     matched_accounts = match_accounts(p_accounts, t_accounts)
                     if matched_accounts > 0:
-                        ratio_accounts = matched_accounts / t_result['ta']
+                        ratio_accounts = matched_accounts / len(t_accounts)
 
                     matched_slots = match_slots(p_slots, t_slots)
                     if matched_slots > 0:
-                        ratio_slots = matched_slots / t_result['ts']
+                        ratio_slots = matched_slots / len(t_slots)
 
                 if t_result['st'][-1] == 's':
                     last_two_chars = t_result['st'][-2:]
@@ -164,15 +191,24 @@ def parse_block(conn, predictor_prefix, tracer_prefix, block_num, dry=0):
                     raise Exception('Failed to parse trace time {0}:{1} {2}'.format(block_num, tx_hash, t_result['st']))
 
                 if dry == 0:
-                    cur.execute(p_sql, (
-                        tx_hash, block_num, p_result['tt'], p_result['tr'], p_result['ta'], p_result['ts'],
+                    data = (tx_hash, block_num, p_result['tt'], p_result['tr'], p_result['ta'], p_result['ts'],
                         json.dumps(p_result['rb']), json.dumps(p_accounts), json.dumps(p_slots),
-                        p_result['st'], matched_accounts, matched_slots, ratio_accounts, ratio_slots))
+                        p_result['st'], matched_accounts, matched_slots, ratio_accounts, ratio_slots)
+                    cur.execute("INSERT INTO predict VALUES (?, ?, ?, ?, ?,?, ?, ?, ?, ?, ?, ?, ?, ?)", data)
+                    # cur.execute(p_sql, (
+                    #     tx_hash, block_num, p_result['tt'], p_result['tr'], p_result['ta'], p_result['ts'],
+                    #     json.dumps(p_result['rb']), json.dumps(p_accounts), json.dumps(p_slots),
+                    #     p_result['st'], matched_accounts, matched_slots, ratio_accounts, ratio_slots))
+                    #
 
-                    cur.execute(t_sql, (
-                        tx_hash, block_num, t_result['type'], status, t_result['jumpis'], t_result['tt'],
-                        t_result['ta'], t_result['ts'], json.dumps(t_accounts), json.dumps(t_slots), t_stat_time,
-                        json.dumps(acl)))
+                    data = (tx_hash, block_num, t_result['type'], status, t_result['jumpis'], t_result['tt'],
+                         t_result['ta'], t_result['ts'], json.dumps(t_accounts), json.dumps(t_slots), t_stat_time,
+                         json.dumps(acl))
+                    cur.execute("INSERT INTO trace VALUES (?, ?, ?, ?, ?,?, ?, ?, ?, ?, ?, ?)", data)
+                    # cur.execute(t_sql, (
+                    #     tx_hash, block_num, t_result['type'], status, t_result['jumpis'], t_result['tt'],
+                    #     t_result['ta'], t_result['ts'], json.dumps(t_accounts), json.dumps(t_slots), t_stat_time,
+                    #     json.dumps(acl)))
 
                     conn.commit()
             return len(predictor_results)
@@ -192,6 +228,21 @@ def import_data(conn, predictor_prefix, tracer_prefix, begin_block, end_block, d
             print("failed to parse block {}: {}".format(block_num, e))
 
 
+def create_tables(conn):
+    # Create a cursor object
+    cur = conn.cursor()
+
+    # Read the SQL file
+    sql_file = open('db.sql')
+    sql_as_string = sql_file.read()
+
+    # Execute the SQL commands
+    cur.executescript(sql_as_string)
+
+    # Save (commit) the changes
+    conn.commit()
+    cur.close()
+
 def main():
     arg_parser = argparse.ArgumentParser(
         description='Import predictor and access list tracer results into database block by block')
@@ -207,12 +258,10 @@ def main():
 
     conn = None
     try:
-        # read connection parameters
-        params = config(args.db)
-        conn = psycopg2.connect(**params)
-
+        conn = sqlite3.connect('testdb.sqlite')
+        create_tables(conn)
         import_data(conn, args.predictor, args.tracer, int(args.begin), int(args.end), args.dry)
-    except (Exception, psycopg2.DatabaseError) as error:
+    except (Exception, sqlite3.Error) as error:
         print(error)
     finally:
         if conn is not None:

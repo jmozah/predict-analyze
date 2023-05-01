@@ -1,4 +1,4 @@
-CREATE TABLE predict
+CREATE TABLE IF NOT EXISTS predict
 (
     hash             char(66) NOT NULL PRIMARY KEY,
     block            bigint   NOT NULL,
@@ -15,9 +15,9 @@ CREATE TABLE predict
     ratio_accounts   float DEFAULT 0,
     ratio_slots      float DEFAULT 0
 );
-CREATE INDEX idxbh_p on predict(block, hash);
+CREATE INDEX IF NOT EXISTS idxbh_p on predict(block, hash);
 
-CREATE TABLE trace
+CREATE TABLE IF NOT EXISTS trace
 (
     hash           char(66) NOT NULL PRIMARY KEY,
     block          bigint   NOT NULL,
@@ -32,5 +32,5 @@ CREATE TABLE trace
     stat_time      bigint,
     acl            jsonb
 );
-CREATE INDEX idxbh_t on trace(block, hash);
-CREATE INDEX idxgin ON trace USING GIN (acl);
+CREATE INDEX IF NOT EXISTS idxbh_t on trace(block, hash);
+/* CREATE INDEX idxgin ON trace USING GIN (acl); */
